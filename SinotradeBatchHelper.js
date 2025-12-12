@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         自動下單零股 (V4.0.1 - XML 批次委託注入 - 自動勾選)
-// @namespace    https://github.com/jianjhih/sinotrade_BatchOrder/workspaces/sinotrade_BatchOrder/SinotradeBatchHelper.js
+// @namespace    https://github.com/jianjhih/sinotrade_BatchOrder/blob/master/SinotradeBatchHelper.js
 // @description  讀取 MDJ/XML 批次委託檔案，解析數據後注入到永豐金證券網頁 DataTables。
 // @author       jianjhih
 // @match        https://www.sinotrade.com.tw/inside/Batch_Order
