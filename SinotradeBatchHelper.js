@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         永豐金證券批次委託注入助手
 // @namespace    https://github.com/jianjhih/sinotrade_BatchOrder/blob/master/SinotradeBatchHelper.js
-// @version      4.1.6 // 最終穩定：通用嘗試同步清空 Vue/框架數據模型
-// @description  解決 DataTables 與前端框架的數據不同步問題，實現同步清空。
+// @version      4.2.4 // 最終穩定版：修正 UI 凍結 + 整合多 XML 檔案匯入
+// @description  支援一次匯入多個 MDJ/XML 批次委託檔案，依序解析數據後注入到永豐金證券網頁 DataTables。
 // @author       jianjhih
 // @match        https://www.sinotrade.com.tw/inside/Batch_Order
 // @icon         https://www.sinotrade.com.tw/newweb/images/icons/512.png
@@ -14,11 +14,13 @@
 (function () {
     'use strict';
 
-    console.log("🚀 程式夥伴：零股 JSON 注入腳本 V4.1.6 載入成功！ (通用同步)");
+    console.log("🚀 程式夥伴：零股 JSON 注入腳本 V4.2.4 載入成功！ (多檔案整合)");
 
     const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-    // --- (省略輔助函式) ---
+    // ====================================================================
+    // A. 輔助函式 (邏輯不變)
+    // ====================================================================
 
     function getCookieValue(name) {
         const value = `; ${document.cookie}`;
@@ -91,39 +93,22 @@
         }
     }
 
-
-    // ====================================================================
-    // ⭐ E. 核心：同步清空數據模型函式 - 通用策略
-    // ====================================================================
-
-    /**
-     * 嘗試同步清空前端框架中儲存訂單的數據陣列。
-     */
     function clearSyncedData() {
         try {
-            // 策略 1: 查找 #app-container 或 body 上的 Vue/React 實例
             const appElement = document.querySelector('#app-container') || document.body;
-            // 嘗試獲取框架實例 (假設它被掛載在 __vue__ 或其他常見屬性上)
             const frameworkInstance = appElement.__vue__ || appElement._reactRootContainer;
 
             if (frameworkInstance) {
-                // 策略 2: 遍歷常見的數據路徑尋找訂單陣列
-                const possiblePaths = [
-                    'orderList', 'batchOrders', 'rows', 'tableData', 'data.orderList'
-                ];
-
+                const possiblePaths = ['orderList', 'batchOrders', 'rows', 'tableData', 'data.orderList'];
                 for (const path of possiblePaths) {
-                    // 嘗試從實例的 $data 或頂層屬性獲取陣列
                     let orderDataModel = frameworkInstance[path] || (frameworkInstance.$data && frameworkInstance.$data[path]);
 
                     if (Array.isArray(orderDataModel)) {
-                        orderDataModel.length = 0; // 直接清空陣列，觸發框架更新
-                        console.log(`✅ 數據同步成功：前端框架的訂單數據模型 (${path}) 已清空。`);
+                        orderDataModel.length = 0;
                         return true;
                     }
                 }
             }
-
         } catch (error) {
              console.warn("⚠️ 數據同步失敗：無法找到或清空前端框架的訂單數據模型。", error);
         }
@@ -131,29 +116,25 @@
     }
 
 
-    // ------------------------------------------
-    // C. 核心 XML 解析與注入 (略)
-    // ------------------------------------------
+    // ====================================================================
+    // C. 核心 XML 解析與注入 (單檔案處理邏輯)
+    // ====================================================================
 
-    async function processInjection(fileContent) {
-        if (typeof $ === 'undefined' || typeof $.fn.DataTable === 'undefined') {
-             throw new Error("DataTables 或 jQuery 函式庫尚未載入。");
-        }
-        const dataTable = $('#batch-stock__table').DataTable();
-        const $tableWrapper = $('#batch-stock__table_wrapper');
-
-        // 1. 解析 XML 內容 (略)
+    /**
+     * 處理單個 XML 檔案的注入邏輯，只負責添加數據到 DataTables。
+     * @param {string} fileContent XML 檔案內容
+     * @param {object} dataTable DataTables 實例
+     * @returns {Promise<number>} 成功注入的筆數
+     */
+    async function processSingleFile(fileContent, dataTable) {
+        // 1. 解析 XML 內容
         const parser = new DOMParser();
         const xmlDoc = parser.parseFromString(fileContent, "application/xml");
         const ordersXML = xmlDoc.getElementsByTagName('Order');
 
-        if (ordersXML.length === 0) {
-            alert("XML 檔案中未找到 <Order> 標籤！請檢查檔案格式是否正確。");
-            return;
-        }
+        if (ordersXML.length === 0) { return 0; }
 
         const DYNAMIC_PARAMS = getDynamicOrderParams(document.querySelector('.dropdown.account__select option'));
-        const totalOrders = ordersXML.length;
 
         const ORDER_TEMPLATE = {
             ...DYNAMIC_PARAMS, "market_id": "S", "ord_bs": "B",
@@ -163,16 +144,9 @@
         };
 
         let injectedCount = 0;
-        let invalidCount = 0;
-        const newRowNodes = [];
 
-        console.log(`--- 開始批量處理 ${totalOrders} 筆 XML 訂單 ---`);
-
-        // 關鍵步驟 1：隱藏表格容器
-        $tableWrapper.css('opacity', 0);
-
-        // 2. 遍歷並批量添加 XML 訂單
-        for (let i = 0; i < totalOrders; i++) {
+        // 2. 遍歷並批量添加 XML 訂單 (不繪製)
+        for (let i = 0; i < ordersXML.length; i++) {
             const orderNode = ordersXML[i];
 
             const stockIdFull = orderNode.getAttribute('ID');
@@ -196,29 +170,96 @@
                 newOrder.ord_price = price.toFixed(2).toString();
                 newOrder.ord_qty = modeMap.finalQty;
 
-                const row = dataTable.row.add(newOrder);
-                const rowNode = row.node();
-                if (rowNode) newRowNodes.push(rowNode);
-
+                dataTable.row.add(newOrder); // 僅添加數據
                 injectedCount++;
-            } else {
-                 console.warn(`⚠️ 跳過無效 XML 訂單 (ID: ${stockIdFull}, Price: ${price}, Vol: ${vol})`);
-                 invalidCount++;
             }
         }
 
-        // 3. 批量繪製表格
-        console.log("📦 數據添加完畢，開始單次批量繪製表格...");
-        dataTable.draw(false);
+        return injectedCount;
+    }
 
-        // 4. UI 修正
-        await sleep(50);
+
+    // ------------------------------------------
+    // D. UI/初始化 (整合多檔案處理)
+    // ------------------------------------------
+
+    async function initializeScript(mainButton, infoContainer, fileInput) {
+        let DYNAMIC_PARAMS = getDynamicOrderParams(null);
 
         try {
-            if (injectedCount > 0) {
-                const rows = dataTable.rows().nodes().toArray();
-                const newRows = rows.slice(-injectedCount);
+            const accountSelectOption = await waitForElement('.dropdown.account__select option');
+            DYNAMIC_PARAMS = getDynamicOrderParams(accountSelectOption);
+            infoContainer.innerHTML = `身份資訊：<b>${DYNAMIC_PARAMS.user_name || 'N/A'}</b><br>帳號：<b>${DYNAMIC_PARAMS.account || 'N/A'}</b>`;
 
+        } catch (error) {
+            console.error(`❌ 腳本身份資訊初始化失敗: ${error.message}`);
+        }
+
+        // --- 檢查 DataTables 實例 ---
+        let dataTable = null;
+        try {
+            await waitForElement('#batch-stock__table', 10000, 100);
+
+            if (!$.fn.dataTable.isDataTable('#batch-stock__table')) {
+                 console.warn("⚠️ DataTables 實例未找到，核心功能無法啟用。");
+                 return;
+            }
+            dataTable = $('#batch-stock__table').DataTable();
+
+        } catch (error) {
+             console.error("❌ DataTables 表格元素未找到，核心功能無法啟用。", error);
+             return;
+        }
+
+        const $tableWrapper = $('#batch-stock__table_wrapper');
+
+
+        // --- 點擊事件 (處理多檔案邏輯) ---
+        mainButton.addEventListener('click', () => { fileInput.click(); });
+
+        fileInput.addEventListener('change', async (event) => {
+            const files = event.target.files;
+            if (!files || files.length === 0) return;
+
+            if (!DYNAMIC_PARAMS.token || !DYNAMIC_PARAMS.account) {
+                 alert("❌ 錯誤：Token/帳號資訊未獲取，請檢查登入狀態。");
+                 return;
+            }
+
+            mainButton.disabled = true;
+            let totalInjectedCount = 0;
+            let fileCount = 0;
+
+            $tableWrapper.css('opacity', 0);
+
+            try {
+                // 異步循環處理每個檔案
+                for (const file of files) {
+                    fileCount++;
+                    mainButton.innerText = `⚙️ 處理檔案 ${fileCount}/${files.length} (${file.name})...`;
+
+                    const fileContent = await new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = (e) => resolve(e.target.result);
+                        reader.onerror = reject;
+                        reader.readAsText(file);
+                    });
+
+                    // ⭐ 串行注入：只添加數據
+                    const injectedCount = await processSingleFile(fileContent, dataTable);
+                    totalInjectedCount += injectedCount;
+                }
+
+                // --- 4. 批量繪製和 UI 修正 ---
+                console.log(`📦 ${fileCount} 個檔案數據添加完畢，共 ${totalInjectedCount} 筆，開始單次批量繪製表格...`);
+
+                // ⭐ 關鍵：單次繪製
+                dataTable.draw(false);
+                await sleep(50);
+
+                // 執行 UI 修正 (買賣方向顏色等)
+                const rows = dataTable.rows().nodes().toArray();
+                const newRows = rows.slice(-totalInjectedCount);
                 const $bsDropdowns = $(newRows).find('.batch-stock__ord-BS__dropDown');
 
                 $bsDropdowns.each(function() {
@@ -227,71 +268,66 @@
                     const actualBS = rowData.ord_bs || 'B';
 
                     let color = 'black';
-                    if (actualBS === 'B') {
-                        color = 'red';
-                    } else if (actualBS === 'S') {
-                        color = 'green';
-                    }
+                    if (actualBS === 'B') { color = 'red'; } else if (actualBS === 'S') { color = 'green'; }
 
                     if (actualBS === 'B' || actualBS === 'S') {
-                        if ($dropdown.val() !== actualBS) {
-                            $dropdown.val(actualBS);
-                        }
-
+                        if ($dropdown.val() !== actualBS) { $dropdown.val(actualBS); }
                         $dropdown.find(`option[value="${actualBS}"]`).prop('selected', true);
                         $dropdown.css('color', color);
                     }
                 });
-                console.log("✅ UI 修正：買賣方向和顏色已在隱藏狀態下完成設定。");
+                console.log("✅ UI 修正：所有檔案的買賣方向已完成設定。");
+
+                $tableWrapper.css('opacity', 1);
+
+                alert(`✅ 成功注入 ${fileCount} 個檔案，共 ${totalInjectedCount} 筆訂單！`);
+
+            } catch (error) {
+                console.error("❌ 多檔案注入過程中發生致命錯誤:", error);
+                alert(`❌ 注入失敗！請檢查 Console 或檔案格式。錯誤: ${error.message}`);
+                $tableWrapper.css('opacity', 1);
             }
 
-        } catch(e) {
-            console.error("❌ UI 買賣方向修正失敗：", e);
+            // 恢復按鈕狀態
+            mainButton.disabled = false;
+            mainButton.innerText = "📂 匯入 XML 批次委託檔 (.xml)";
+            fileInput.value = '';
+        });
+
+        // --- 提交清理監聽器 ---
+        const submitButton = document.querySelector('.btn__submit__select');
+        if (submitButton) {
+            submitButton.addEventListener('click', async () => {
+                await sleep(1500);
+                const isSynced = clearSyncedData();
+                if (dataTable.rows().count() > 0) {
+                     if (!isSynced) console.log("🧹 DataTables 正在手動清理...");
+                     dataTable.clear().draw();
+                }
+                if (isSynced) console.log("✅ DataTables 和前端數據模型已同步清空。");
+            });
         }
-
-        // 5. 顯示表格容器
-        $tableWrapper.css('opacity', 1);
-
-        console.log("✅ XML 數據注入完成！");
-        //alert(`成功注入 ${injectedCount} 筆訂單！`);
     }
 
-    // ------------------------------------------
-    // D. UI/初始化 (加入 clearSyncedData 調用)
-    // ------------------------------------------
 
-    async function initializeScript() {
-        let DYNAMIC_PARAMS;
-
-        try {
-            const accountSelectOption = await waitForElement('.dropdown.account__select option');
-            DYNAMIC_PARAMS = getDynamicOrderParams(accountSelectOption);
-
-        } catch (error) {
-            console.error(`❌ 腳本初始化失敗: ${error.message}`);
-            DYNAMIC_PARAMS = getDynamicOrderParams(null);
-        }
-
-        try {
-            await waitForElement('#batch-stock__table', 10000, 100);
-        } catch (error) {
-             console.error("❌ 未找到 DataTables 元素，無法啟用清空監聽器。");
-             return;
-        }
-        const dataTable = $('#batch-stock__table').DataTable();
-
-        // --- 1 & 2. 注入 UI 設置及按鈕事件 ---
+    /**
+     * 腳本啟動點：創建 UI 元素並延遲調用 initializeScript
+     */
+    async function runScript() {
+        // --- 創建 UI 元素 (確保立即顯示) ---
         const customContainer = document.createElement("div");
         Object.assign(customContainer.style, {
             position: 'fixed', top: '100px', left: '50%', transform: 'translateX(-50%)',
-            zIndex: '99999', padding: '10px', backgroundColor: '#fff', border: '2px solid #333',
+            zIndex: '2147483647',
+            padding: '10px', backgroundColor: '#fff', border: '2px solid #333',
             boxShadow: '0 4px 8px rgba(0,0,0,0.1)', display: 'flex', flexDirection: 'row',
             alignItems: 'center', gap: '15px'
         });
         document.body.appendChild(customContainer);
 
         const fileInput = document.createElement("input");
-        fileInput.type = "file"; fileInput.accept = ".xml"; fileInput.style.display = "none";
+        fileInput.type = "file"; fileInput.accept = ".xml"; fileInput.multiple = true; // ⭐ 啟用多選
+        fileInput.style.display = "none";
         customContainer.appendChild(fileInput);
 
         const mainButton = document.createElement("button");
@@ -304,66 +340,16 @@
         customContainer.appendChild(mainButton);
 
         const infoContainer = document.createElement("div");
-        infoContainer.innerHTML = `身份資訊：<b>${DYNAMIC_PARAMS.user_name || '未取得'}</b><br>帳號：<b>${DYNAMIC_PARAMS.account || '未取得'}</b>`;
+        infoContainer.innerHTML = `身份資訊：<b>載入中...</b><br>帳號：<b>載入中...</b>`;
         Object.assign(infoContainer.style, { fontSize: '12px', lineHeight: '1.3', padding: '0 5px' });
         customContainer.appendChild(infoContainer);
 
-        // --- 點擊事件 ---
-        mainButton.addEventListener('click', () => { fileInput.click(); });
-
-        fileInput.addEventListener('change', (event) => {
-            const file = event.target.files[0];
-            if (!file) return;
-
-            if (!DYNAMIC_PARAMS.token || !DYNAMIC_PARAMS.account) {
-                 alert("❌ 錯誤：Token/帳號資訊未獲取，請檢查登入狀態。");
-                 return;
-            }
-
-            mainButton.disabled = true;
-            mainButton.innerText = "⚙️ 讀取檔案中...";
-
-            const reader = new FileReader();
-
-            reader.onload = (e) => {
-                processInjection(e.target.result)
-                    .catch((error) => {
-                        console.error("XML 注入過程中發生錯誤:", error);
-                        alert(`❌ XML 注入失敗！請檢查 Console 或檔案格式。錯誤: ${error.message}`);
-                    })
-                    .finally(() => {
-                        mainButton.disabled = false;
-                        mainButton.innerText = "📂 匯入 XML 批次委託檔 (.xml)";
-                        fileInput.value = '';
-                    });
-            };
-            reader.readAsText(file);
-        });
-
-        // --- 3. 提交清理監聽器 (同步清空邏輯) ---
-        const submitButton = document.querySelector('.btn__submit__select');
-        if (submitButton) {
-            submitButton.addEventListener('click', async () => {
-                // 1. 等待原網站的送出處理完成
-                await sleep(1500);
-
-                // 2. 優先清空前端框架的數據模型
-                const isSynced = clearSyncedData();
-
-                // 3. 其次，清空 DataTables (DataTables 是視覺保證)
-                if (dataTable.rows().count() > 0) {
-                     if (!isSynced) console.log("🧹 DataTables 正在手動清理...");
-                     dataTable.clear().draw();
-                }
-
-                if (isSynced) {
-                     console.log("✅ DataTables 和前端數據模型已同步清空。");
-                }
-            });
-            console.log("✅ '選取送出' 按鈕的 DataTables 清理監聽器已啟用。");
-        }
+        // ⭐ 關鍵修正：延遲執行 initializeScript
+        setTimeout(() => {
+            initializeScript(mainButton, infoContainer, fileInput);
+        }, 500);
     }
 
-    // 執行腳本初始化
-    initializeScript();
+    // 執行腳本啟動
+    runScript();
 })();
