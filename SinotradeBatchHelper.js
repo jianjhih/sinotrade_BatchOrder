@@ -280,7 +280,7 @@
 
                 $tableWrapper.css('opacity', 1);
 
-                alert(`✅ 成功注入 ${fileCount} 個檔案，共 ${totalInjectedCount} 筆訂單！`);
+                //alert(`✅ 成功注入 ${fileCount} 個檔案，共 ${totalInjectedCount} 筆訂單！`);
 
             } catch (error) {
                 console.error("❌ 多檔案注入過程中發生致命錯誤:", error);
