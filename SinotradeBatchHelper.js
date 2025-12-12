@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         永豐金證券批次委託注入助手
-// @namespace    https://github.com/jianjhih/sinotrade_BatchOrder/blob/master/SinotradeBatchHelper.js
+// @namespace    https://raw.githubusercontent.com/jianjhih/sinotrade_BatchOrder/refs/heads/master/SinotradeBatchHelper.js
 // @version      4.0.4 // 元數據更新版本
 // @description  讀取 MDJ/XML 批次委託檔案，解析數據後注入到永豐金證券網頁 DataTables。
 // @author       jianjhih
