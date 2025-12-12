@@ -226,7 +226,7 @@
         $tableWrapper.css('opacity', 1);
 
         console.log("✅ XML 數據注入完成！");
-        alert(`成功注入 ${injectedCount} 筆訂單！(最終 UI 穩定版 V4.1.3)`);
+        alert(`成功注入 ${injectedCount} 筆訂單！`);
     }
 
     // ------------------------------------------
