@@ -253,7 +253,7 @@
         $tableWrapper.css('opacity', 1);
 
         console.log("✅ XML 數據注入完成！");
-        alert(`成功注入 ${injectedCount} 筆訂單！`);
+        //alert(`成功注入 ${injectedCount} 筆訂單！`);
     }
 
     // ------------------------------------------
